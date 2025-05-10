@@ -103,6 +103,16 @@ class Attention(gnn.MessagePassing):
 
         """
         # Compute value matrix
+        # print("before x_struct.shape", x.shape)
+        # convert back to 2D
+        x = torch.mean(x, dim=2)
+        x_dim_1 = x.shape[1]
+        # still need to be fixed
+        linear = nn.Linear(x_dim_1, 64).to(x.device)
+        # linear = nn.Linear(128, 64).to(x.device)
+
+        # Apply the linear transformation
+        x = linear(x)
 
         v = self.to_v(x)
 
@@ -225,6 +235,9 @@ class StructureExtractor(nn.Module):
 
     def forward(self, x, edge_index, edge_attr=None,
             subgraph_indicator_index=None, agg="sum"):
+        # x = torch.mean(x, dim=2)
+        # # x = torch.squeeze(x, dim=2)
+        # print("x_squeeze.shape", x.shape)
         x_cat = [x]
         for gcn_layer in self.gcn:
             # if self.gnn_type == "attn":
@@ -237,10 +250,13 @@ class StructureExtractor(nn.Module):
             else:
                 x = self.relu(gcn_layer(x, edge_index))
 
+            # print("x.shape", x.shape)
             if self.concat:
                 x_cat.append(x)
 
         if self.concat:
+            # print("x_cat.shape", x_cat[0].shape)
+            # print("x.shape", x.shape)
             x = torch.cat(x_cat, dim=-1)
 
         if self.khopgnn:
@@ -311,8 +327,8 @@ class KHopStructureExtractor(nn.Module):
         return x_struct
 
 
-class TransformerEncoderLayer(nn.TransformerEncoderLayer):
-    r"""Structure-Aware Transformer layer, made up of structure-aware self-attention and feed-forward network.
+class TransformerEncoderGroupingLayer(nn.TransformerEncoderLayer):
+    """Structure-Aware Transformer layer, made up of structure-aware self-attention and feed-forward network.
 
     Args:
     ----------
@@ -329,10 +345,26 @@ class TransformerEncoderLayer(nn.TransformerEncoderLayer):
         se:                 structure extractor to use, either gnn or khopgnn (default: gnn).
         k_hop:              the number of base GNN layers or the K hop size for khopgnn structure extractor (default=2).
     """
-    def __init__(self, d_model, nhead=8, dim_feedforward=512, dropout=0.1,
+    def __init__(self, d_model, edge_index, complete_edge_index,
+            subgraph_node_index=None, subgraph_edge_index=None,
+            subgraph_edge_attr=None,
+            subgraph_indicator_index=None,
+            edge_attr=None, degree=None, ptr=None, nhead=8, dim_feedforward=512, dropout=0.1,
                 activation="relu", batch_norm=True, pre_norm=False,
                 gnn_type="gcn", se="gnn", k_hop=2, **kwargs):
         super().__init__(d_model, nhead, dim_feedforward, dropout, activation)
+        
+        # add: initialize the parameters
+        self.edge_index = edge_index
+        self.complete_edge_index = complete_edge_index
+        self.subgraph_node_index = subgraph_node_index
+        self.subgraph_edge_index = subgraph_edge_index
+        self.subgraph_edge_attr = subgraph_edge_attr
+        self.subgraph_indicator_index = subgraph_indicator_index
+        self.edge_attr = edge_attr
+        self.degree = degree
+        # print("self.degree", self.degree)
+        self.ptr = ptr
 
         self.self_attn = Attention(d_model, nhead, dropout=dropout,
             bias=False, gnn_type=gnn_type, se=se, k_hop=k_hop, **kwargs)
@@ -342,40 +374,45 @@ class TransformerEncoderLayer(nn.TransformerEncoderLayer):
             self.norm1 = nn.BatchNorm1d(d_model)
             self.norm2 = nn.BatchNorm1d(d_model)
 
-    def forward(self, x, edge_index, complete_edge_index,
-            subgraph_node_index=None, subgraph_edge_index=None,
-            subgraph_edge_attr=None,
-            subgraph_indicator_index=None,
-            edge_attr=None, degree=None, ptr=None,
-            return_attn=False,
-        ):
-
+    def forward(self, x, return_attn=False):
         if self.pre_norm:
             x = self.norm1(x)
+        original_shape = x.shape
 
         x2, attn = self.self_attn(
             x,
-            edge_index,
-            complete_edge_index,
-            edge_attr=edge_attr,
-            subgraph_node_index=subgraph_node_index,
-            subgraph_edge_index=subgraph_edge_index,
-            subgraph_indicator_index=subgraph_indicator_index,
-            subgraph_edge_attr=subgraph_edge_attr,
-            ptr=ptr,
+            self.edge_index,
+            self.complete_edge_index,
+            edge_attr=self.edge_attr,
+            subgraph_node_index=self.subgraph_node_index,
+            subgraph_edge_index=self.subgraph_edge_index,
+            subgraph_indicator_index=self.subgraph_indicator_index,
+            subgraph_edge_attr=self.subgraph_edge_attr,
+            ptr=self.ptr,
             return_attn=return_attn
         )
+        # print("x2.shape_before = ", x2.shape)
+        linear = nn.Linear(64, 128).to(x.device)
+        x2 = linear(x2)
+        if(len(x2.shape) == 2):
+            x2 = x2.unsqueeze(2)
+            x2 = x2.expand(-1, -1, original_shape[-1])
+        # print("x2.shape_after = ", x2.shape)
+        # x = x + self.dropout1(x2)
 
-        if degree is not None:
-            x2 = degree.unsqueeze(-1) * x2
-        x = x + self.dropout1(x2)
-        if self.pre_norm:
-            x = self.norm2(x)
-        else:
-            x = self.norm1(x)
-        x2 = self.linear2(self.dropout(self.activation(self.linear1(x))))
-        x = x + self.dropout2(x2)
+        # if self.degree is not None:
+        #     x2 = self.degree.unsqueeze(-1) * x2
+        # x = x + self.dropout1(x2)
+        # if self.pre_norm:
+        #     x = self.norm2(x)
+        # else:
+        #     x = self.norm1(x)
+        # x2 = self.linear2(self.dropout(self.activation(self.linear1(x))))
+        # x = x + self.dropout2(x2)
 
-        if not self.pre_norm:
-            x = self.norm2(x)
+        # if not self.pre_norm:
+        #     x = self.norm2(x)
+
+        # x = x.view(original_shape)
+        # print("x======.shape", x.shape)
         return x
