@@ -18,7 +18,7 @@ from sat.utils import count_parameters
 from sat.position_encoding import POSENCODINGS
 from sat.gnn_layers import GNN_TYPES
 from timeit import default_timer as timer
-from groupvit.models import GraphTransformer as GroupGraphTransformer
+from groupvit.models import GroupGraphTransformer
 from model.simclr import simclr
 from infonce import InfoNCE
 from experiments.arguments import load_args

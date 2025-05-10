@@ -8,6 +8,7 @@ from einops import repeat
 from torch.utils.checkpoint import checkpoint
 
 class GraphGroupingLayer(nn.Module):
+    """GroupingLayer in SAT."""
     def __init__(self,
                  dim,
                  num_input_token,
@@ -134,7 +135,7 @@ class GraphGroupingLayer(nn.Module):
         return x, group_token, attn_dict
 
 
-class GraphTransformer(nn.Module):
+class GroupGraphTransformer(nn.Module):
     def __init__(self, in_size, num_class, d_model, num_heads=8,
                  dim_feedforward=512, dropout=0.0, num_layers=4,
                  batch_norm=False, abs_pe=False, abs_pe_dim=0,
