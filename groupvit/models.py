@@ -2,8 +2,9 @@
 import torch
 from torch import nn
 import torch_geometric.nn as gnn
+from torch.nn.utils.rnn import pad_sequence
 from .layers import TransformerEncoderGroupingLayer
-from groupvit.groupvit import GroupingBlock, MixerMlp
+from groupvit.groupvit import GroupingBlock, MixerMlp, GroupingLayer
 from einops import repeat
 from torch.utils.checkpoint import checkpoint
 
@@ -384,3 +385,186 @@ class GroupGraphTransformer(nn.Module):
         linear_out = nn.Linear(output.size(1), self.embedding.embedding_dim).to(output.device)
         output = linear_out(output)
         return self.classifier(output)
+
+
+class GraphViT(nn.Module):
+    def __init__(self, in_size, d_model, num_class, abs_pe=False, abs_pe_dim=0, in_embed=True,
+                 embed_factors=[1, 1, 1], depths=[6, 3, 3],
+                 num_heads=[8, 8, 8], num_group_tokens=[64, 8, 0],
+                 num_output_groups=[64, 8], hard_assignment=True,
+                 mlp_ratio=4, qkv_bias=True, qk_scale=None, drop_rate=0., attn_drop_rate=0., 
+                 drop_path_rate=0.1, use_ckpt=False, global_pool='mean', max_seq_len=None, **kwargs):
+        super().__init__()
+        self.num_layers = len(depths)
+        self.embed_factors = embed_factors
+        self.depths = depths
+        self.num_group_tokens = num_group_tokens
+        self.num_output_groups = num_output_groups
+        self.num_heads = num_heads
+        self.hard_assignment = hard_assignment
+        # GroupingLayer parameters
+        self.mlp_ratio = mlp_ratio
+        self.qkv_bias = qkv_bias
+        self.qk_scale = qk_scale
+        self.drop_rate = drop_rate
+        self.attn_drop_rate = attn_drop_rate
+        self.drop_path_rate = drop_path_rate
+        self.use_checkpoint = use_ckpt
+        
+        # get positional embeddings
+        self.abs_pe = abs_pe
+        self.abs_pe_dim = abs_pe_dim
+        if abs_pe and abs_pe_dim > 0:
+            self.embedding_abs_pe = nn.Linear(abs_pe_dim, d_model)
+
+        # get input embeddings
+        if in_embed:
+            if isinstance(in_size, int):
+                self.embedding = nn.Embedding(in_size, d_model) 
+            elif isinstance(in_size, nn.Module):
+                self.embedding = in_size
+            else:
+                raise ValueError("Not implemented!")
+        else:
+            self.embedding = nn.Linear(in_features=in_size,
+                                       out_features=d_model,
+                                       bias=False)
+            
+        # pooling
+        if global_pool == 'mean':
+            self.pooling = gnn.global_mean_pool
+        elif global_pool == 'add':
+            self.pooling = gnn.global_add_pool
+        elif global_pool == 'cls':
+            self.cls_token = nn.Parameter(torch.randn(1, d_model))
+            self.pooling = None
+
+        # classifier
+        self.max_seq_len = max_seq_len
+        if max_seq_len is None:
+            self.classifier = nn.Sequential(
+                nn.Linear(d_model, d_model),
+                nn.ReLU(True),
+                nn.Linear(d_model, num_class)
+            )
+        else:
+            self.classifier = nn.ModuleList()
+            for i in range(max_seq_len):
+                self.classifier.append(nn.Linear(d_model, num_class))
+            
+    def build_layers(self, d_model, num_input_token):
+        dpr = [x.item() for x in torch.linspace(0, self.drop_path_rate, sum(self.depths))]
+
+        # build grouping layers
+        self.layers = nn.ModuleList()
+        for i_layer in range(self.num_layers):
+            dim = int(d_model * self.embed_factors[i_layer])
+            # downsample
+            downsample = None
+            if i_layer < self.num_layers - 1:
+                out_dim = int(d_model * self.embed_factors[i_layer + 1])
+                downsample = GroupingBlock(
+                    dim=dim,
+                    out_dim=out_dim,
+                    num_heads=self.num_heads[i_layer],
+                    num_group_token=self.num_group_tokens[i_layer],
+                    num_output_group=self.num_output_groups[i_layer],
+                    norm_layer=nn.LayerNorm,
+                    hard=self.hard_assignment,
+                    gumbel=self.hard_assignment
+                )
+                num_output_token = self.num_output_groups[i_layer]
+
+            # group projector
+            if i_layer > 0 and self.num_group_tokens[i_layer] > 0:
+                prev_dim = int(d_model * self.embed_factors[i_layer - 1])
+                group_projector = nn.Sequential(
+                    nn.LayerNorm(prev_dim),
+                    MixerMlp(self.num_group_tokens[i_layer - 1], prev_dim // 2, self.num_group_tokens[i_layer]))
+
+                if dim != prev_dim:
+                    group_projector = nn.Sequential(group_projector, nn.LayerNorm(prev_dim),
+                                                    nn.Linear(prev_dim, dim, bias=False))
+            else:
+                group_projector = None
+
+            layer = GroupingLayer(
+                dim=dim,
+                num_input_token=num_input_token,
+                depth=self.depths[i_layer],
+                num_heads=self.num_heads[i_layer],
+                num_group_token=self.num_group_tokens[i_layer],
+                mlp_ratio=self.mlp_ratio,
+                qkv_bias=self.qkv_bias,
+                qk_scale=self.qk_scale,
+                drop=self.drop_rate,
+                attn_drop=self.attn_drop_rate,
+                drop_path=dpr[sum(self.depths[:i_layer]):sum(self.depths[:i_layer + 1])],
+                norm_layer=nn.LayerNorm,
+                downsample=downsample,
+                use_checkpoint=self.use_checkpoint,
+                group_projector=group_projector,
+                # only zero init group token if we have a projection
+                zero_init_group_token=group_projector is not None)
+            self.layers.append(layer.cuda())
+
+            
+    def forward(self, data, return_attn=False):
+        x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
+        node_depth = data.node_depth if hasattr(data, "node_depth") else None
+
+        # positional + input embeddings
+        abs_pe = data.abs_pe if hasattr(data, 'abs_pe') else None
+        output = self.embedding(x) if node_depth is None else self.embedding(x, node_depth.view(-1,))
+        if self.abs_pe and abs_pe is not None:
+            abs_pe = self.embedding_abs_pe(abs_pe)
+            output = output + abs_pe
+        split_sizes = (data.ptr[1:] - data.ptr[:-1]).tolist()  # [num_nodes_graph1, num_nodes_graph2, ...]
+        node_embeddings = output.split(split_sizes)  # list of [Ni, dim] tensors, i=1..B
+
+        # pad into [batch_size, max_nodes, dim]
+        output_padded = pad_sequence(node_embeddings, batch_first=True)  # [B, N_max, dim]
+        B, N_max, dim = output_padded.shape
+
+        # build layers
+        self.build_layers(
+            d_model=dim,
+            num_input_token=N_max
+        )
+
+        # forward layers
+        group_token = None
+        attn_dict_list = []
+        for layer in self.layers:
+            output_padded, group_token, attn_dict = layer(
+                output_padded,
+                prev_group_token=group_token,
+                return_attn=return_attn
+            )
+            attn_dict_list.append(attn_dict)
+
+        # readout step
+        device = output_padded.device
+        mask = torch.zeros((len(split_sizes), output_padded.size(1)), dtype=torch.bool, device=device)  # [B, N_max]
+        for i, l in enumerate(split_sizes):
+            mask[i, :l] = 1
+        mask = mask.unsqueeze(-1)  # [B, N_max, 1]
+        masked_output = output_padded * mask  # [B, N_max, C], padding 會是 0
+        pooled = masked_output.sum(dim=1) / mask.sum(dim=1)  # [B, C]
+
+        # output = self.pooling(output_padded, data.batch) if self.pooling is not None else output_padded
+
+        # print("output.shape = ", output.shape) #  = [2960, 64]
+        # print("output = ", output[0])
+        # print("output_padded.shape = ", output_padded.shape)
+        # print("output_padded = ", output_padded[0])
+
+        if self.max_seq_len is not None:
+            pred_list = []
+            for i in range(self.max_seq_len):
+                pred_list.append(self.classifier[i](pooled))
+            return pred_list
+
+        linear_out = nn.Linear(pooled.size(1), self.embedding.embedding_dim).to(pooled.device)
+        pooled = linear_out(pooled)
+        return self.classifier(pooled)

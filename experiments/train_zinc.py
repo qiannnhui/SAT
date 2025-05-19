@@ -18,7 +18,7 @@ from sat.utils import count_parameters
 from sat.position_encoding import POSENCODINGS
 from sat.gnn_layers import GNN_TYPES
 from timeit import default_timer as timer
-from groupvit.models import GroupGraphTransformer
+from groupvit.models import GroupGraphTransformer, GraphViT
 from model.simclr import simclr
 from infonce import InfoNCE
 from experiments.arguments import load_args
@@ -292,6 +292,26 @@ def main():
                              se=args.se,
                              deg=deg,
                              global_pool=args.global_pool) 
+    elif args.model == "graphvit":
+        model = GraphViT(in_size=input_size,
+                             num_class=1,
+                             d_model=args.dim_hidden,
+                            #  dim_feedforward=2*args.dim_hidden,
+                            #  dropout=args.dropout,
+                            #  num_heads=args.num_heads,
+                            #  num_layers=args.num_layers,
+                            #  batch_norm=args.batch_norm,
+                             abs_pe=args.abs_pe,
+                             abs_pe_dim=args.abs_pe_dim,
+                            #  gnn_type=args.gnn_type,
+                            #  use_edge_attr=args.use_edge_attr,
+                            #  num_edge_features=num_edge_features,
+                            #  edge_dim=args.edge_dim,
+                            #  k_hop=args.k_hop,
+                            #  se=args.se,
+                            #  deg=deg
+                            )
+        print("GraphViT")
     else:
         raise ValueError("Model type not supported")
     

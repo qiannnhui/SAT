@@ -44,7 +44,7 @@ def load_args():
     
     # add:
     parser.add_argument('--unsupervised', action='store_true', help='supervised or unsupervised', default=False)
-    parser.add_argument('--model', type=str, default='sat', choices=['sat', 'groupvit'], help='model type')
+    parser.add_argument('--model', type=str, default='sat', choices=['sat', 'groupvit', 'graphvit'], help='model type')
 
     args = parser.parse_args()
     args.use_cuda = torch.cuda.is_available()
