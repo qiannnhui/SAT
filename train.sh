@@ -1,5 +1,5 @@
 # # graph regression
-python ./experiments/train_zinc.py --abs-pe rw --se gnn --gnn-type pna2 --dropout 0.3 --k-hop 3 --use-edge-attr --model graphvit
+# python ./experiments/train_zinc.py --abs-pe rw --se gnn --gnn-type pna2 --dropout 0.3 --k-hop 3 --use-edge-attr --model graphvit
 # python ./experiments/train_zinc.py --abs-pe rw --se gnn --gnn-type pna2 --dropout 0.3 --k-hop 3
 
 # python ./experiments/train_zinc.py --abs-pe rw --se khopgnn --gnn-type pna2 --dropout 0.2 --k-hop 3 --use-edge-attr
@@ -15,3 +15,5 @@ python ./experiments/train_zinc.py --abs-pe rw --se gnn --gnn-type pna2 --dropou
 
 # Train SAT on OGBG-CODE2
 # python ./experiments/train_code2.py --gnn-type gcn --use-edge-attr
+python ./experiments/train_graph_classification.py --gnn-type gcn --model graphvit --DS MUTAG --abs-pe rw --epoch 200 --use_gcn
+# python ./experiments/train_graph_classification.py --gnn-type gcn --model graphvit --DS MUTAG --abs-pe rw --epoch 200 --use_pretrained_gin

@@ -16,10 +16,6 @@ class Encoder(torch.nn.Module):
     def __init__(self, num_features, dim, num_gc_layers):
         super(Encoder, self).__init__()
 
-        # num_features = dataset.num_features
-        # dim = 32
-        # dim = d_model
-        # num_features = in_size
         self.num_gc_layers = num_gc_layers
 
         # self.nns = []
@@ -38,7 +34,7 @@ class Encoder(torch.nn.Module):
             self.convs.append(conv)
             self.bns.append(bn)
 
-    def forward(self, x, edge_index, batch):
+    def forward(self, x, edge_index, batch=None):
         # print("forward!")
         if x is None:
             x = torch.ones((batch.shape[0], 1)).to(device='cuda')
@@ -52,10 +48,11 @@ class Encoder(torch.nn.Module):
             # if i == 2:
                 # feature_map = x2
 
-        xpool = [global_add_pool(x, batch) for x in xs]
-        x = torch.cat(xpool, 1)
+        # xpool = [global_add_pool(x, batch) for x in xs]
+        # x = torch.cat(xpool, 1)
 
-        return x, torch.cat(xs, 1)
+        # return x, torch.cat(xs, 1)  
+        return torch.cat(xs, 1)  # return all intermediate features and the last one
 
     def get_embeddings(self, loader):
 

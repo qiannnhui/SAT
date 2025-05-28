@@ -45,6 +45,14 @@ def load_args():
     # add:
     parser.add_argument('--unsupervised', action='store_true', help='supervised or unsupervised', default=False)
     parser.add_argument('--model', type=str, default='sat', choices=['sat', 'groupvit', 'graphvit'], help='model type')
+    parser.add_argument('--DS', type=str, default='MUTAG', choices=['MUTAG', 'PROTEINS', 'DD', 'NCI1', 'IMDB-B', 'COLLAB', 'ENZYMES', 'MSRC-21'], help='dataset for graph classification')
+    parser.add_argument('--data_path', type=str, default='/home/qiannnhui/data/data', help='path to dataset') # 249
+    parser.add_argument('--subgraph_embed', action='store_true', help='use subgraph embedding', default=False)
+    parser.add_argument('--lr_schedule', type=str, default='none', choices=['cosine', 'step', 'none'], help='learning rate schedule')
+
+    # aggregrate
+    parser.add_argument('--use_gcn', action='store_true', help='aggregate with 2 layer gcn', default=False)
+    parser.add_argument('--use_pretrained_gin', action='store_true', help='aggregrate with pretrained gin', default=False)
 
     args = parser.parse_args()
     args.use_cuda = torch.cuda.is_available()

@@ -303,6 +303,7 @@ def main():
                             #  batch_norm=args.batch_norm,
                              abs_pe=args.abs_pe,
                              abs_pe_dim=args.abs_pe_dim,
+                             subgraph_embed=args.subgraph_embed,
                             #  gnn_type=args.gnn_type,
                             #  use_edge_attr=args.use_edge_attr,
                             #  num_edge_features=num_edge_features,

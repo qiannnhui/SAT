@@ -7,6 +7,23 @@ from .layers import TransformerEncoderGroupingLayer
 from groupvit.groupvit import GroupingBlock, MixerMlp, GroupingLayer
 from einops import repeat
 from torch.utils.checkpoint import checkpoint
+from torch_geometric.nn import GCNConv
+import torch.nn.functional as F
+from model.gin import Encoder
+from experiments.arguments import load_args
+
+class TwoLayerGCNConv(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(TwoLayerGCNConv, self).__init__()
+        self.conv1 = GCNConv(in_channels, out_channels)
+        self.conv2 = GCNConv(out_channels, out_channels)
+
+    def forward(self, x, edge_index):
+        x = self.conv1(x, edge_index)
+        x = F.relu(x)
+        x = self.conv2(x, edge_index)
+        x = F.relu(x)
+        return x
 
 class GraphGroupingLayer(nn.Module):
     """GroupingLayer in SAT."""
@@ -102,21 +119,16 @@ class GraphGroupingLayer(nn.Module):
             # group_token = self.group_token.expand(x.size(0), -1)
             # group_token = self.group_token.expand(x.size(0), -1, -1)
             if self.group_projector is not None:
-                # print("group_token device = ", group_token.device)
-                # print("prev_group_token device = ", prev_group_token.device)
                 # group_token = group_token.to(prev_group_token.device)
                 # print("group_token device = ", group_token.device)
                 prev_group_token = prev_group_token.to(group_token.device)
-                # print("group_projector device = ", self.group_projector.device)
                 group_token = group_token + self.group_projector(prev_group_token)
         else:
             group_token = None
 
-        # print("x.shape = ", x.shape)
         if(len(x.shape) == 2):
             x = x.unsqueeze(2)
             x = x.expand(-1, -1, self.dim)
-        # print("x.shape = ", x.shape)
 
         # B, L, C = x.shape
         cat_x = self.concat_x(x, group_token)
@@ -280,14 +292,6 @@ class GroupGraphTransformer(nn.Module):
 
     def forward(self, data, return_attn=False):
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
-        # print("x.shape = ", x.shape)
-        # print("batch = ", data.batch)
-        # print("x.shape = ", x.shape)
-        # print("len(x.shape) = ", len(x.shape))
-
-        # x = x.unsqueeze(-1)  # 在第三維度插入一個維度，結果是 [2995, 64, 1]
-        # x = x.expand(-1, -1, self.embedding.embedding_dim)  # 擴展第三維度的大小為 384，結果是 [2995, 64, 384]
-        # print("x.shape after expand = ", x.shape)
 
         node_depth = data.node_depth if hasattr(data, "node_depth") else None
         
@@ -388,7 +392,7 @@ class GroupGraphTransformer(nn.Module):
 
 
 class GraphViT(nn.Module):
-    def __init__(self, in_size, d_model, num_class, abs_pe=False, abs_pe_dim=0, in_embed=True,
+    def __init__(self, in_size, d_model, num_class, abs_pe=False, abs_pe_dim=0, in_embed=True, subgraph_embed=False,
                  embed_factors=[1, 1, 1], depths=[6, 3, 3],
                  num_heads=[8, 8, 8], num_group_tokens=[64, 8, 0],
                  num_output_groups=[64, 8], hard_assignment=True,
@@ -429,7 +433,29 @@ class GraphViT(nn.Module):
             self.embedding = nn.Linear(in_features=in_size,
                                        out_features=d_model,
                                        bias=False)
-            
+        self.subgraph_embed = subgraph_embed
+        # Aggregrate
+        self.args = load_args()
+        
+        if self.args.use_gcn:
+            self.aggregate_func = TwoLayerGCNConv(d_model, d_model)
+        # load pre-trained GIN model
+        elif self.args.use_pretrained_gin:
+            checkpoint = torch.load(f'ckpt/{self.args.DS}/best_model_0.2_0.pth')
+
+            # 取出 encoder 部分的 state_dict，去掉 'encoder.' prefix
+            encoder_state_dict = {k[len('encoder.'):]: v for k, v in checkpoint.items() if k.startswith('encoder.')}
+            filtered_state_dict = {k: v for k, v in encoder_state_dict.items() if not (k.startswith('convs.0.') or k.startswith('bns.0.'))}
+            # print("filtered_state_dict keys:", filtered_state_dict.keys())
+            self.aggregate_func = Encoder(num_features=d_model, dim=d_model, num_gc_layers=5)
+
+            # 載入到 new_model，strict=False 避免因缺少第一層參數報錯
+            self.aggregate_func.load_state_dict(filtered_state_dict, strict=False)
+            self.aggregate_func = self.aggregate_func.to(torch.device("cuda"))
+            self.aggregate_func.eval()
+        else:
+            self.aggregate_func = None
+
         # pooling
         if global_pool == 'mean':
             self.pooling = gnn.global_mean_pool
@@ -508,23 +534,81 @@ class GraphViT(nn.Module):
                 zero_init_group_token=group_projector is not None)
             self.layers.append(layer.cuda())
 
-            
+
+
+    def split_edge_index(self, edge_index, ptr):
+        # 假設 edge_index: [2, E]
+        # 假設 data.ptr: [B+1]，節點起訖位置，例如：[0, N1, N1+N2, ..., total_nodes]
+        # ptr: LongTensor shape [B+1]
+        B = ptr.size(0) - 1
+        E = edge_index.size(1)
+
+        # 取得每條邊兩端節點的 batch id（子圖 id）
+        # 先做搜尋排序定位節點在哪個ptr區間內
+        # ptr 是遞增的，用 searchsorted 找對應 batch_id
+
+        src_batch = torch.searchsorted(ptr, edge_index[0], right=True) - 1  # shape: [E]
+        dst_batch = torch.searchsorted(ptr, edge_index[1], right=True) - 1  # shape: [E]
+
+        # 篩選兩端都屬於同一子圖的邊
+        mask = (src_batch == dst_batch)
+
+        # 篩選出來的邊與對應 batch id
+        filtered_batch = src_batch[mask]
+        filtered_edge_index = edge_index[:, mask]
+
+        # 重定位邊的節點索引：都減去該子圖起始節點 id
+        node_offset = ptr[filtered_batch]  # shape: [num_filtered_edges]
+        filtered_edge_index = filtered_edge_index - node_offset.unsqueeze(0)
+
+        # 接下來把每個子圖的邊分組
+
+        # 找出每個 batch 裡邊數量
+        edge_counts = torch.bincount(filtered_batch, minlength=B)  # shape: [B]
+
+        # 使用 torch.split 依照每張圖邊數切割
+        edge_splits = torch.split(filtered_edge_index, edge_counts.tolist(), dim=1)
+
+        return edge_splits
+
+
     def forward(self, data, return_attn=False):
-        x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
-        node_depth = data.node_depth if hasattr(data, "node_depth") else None
+        # x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
+        x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+        # print("x shape:", x.shape, "x dtype:", x.dtype)
+        # print("x = ", x[0])
+        if self.subgraph_embed:
+            pass
+        else:
+            node_depth = data.node_depth if hasattr(data, "node_depth") else None
 
-        # positional + input embeddings
-        abs_pe = data.abs_pe if hasattr(data, 'abs_pe') else None
-        output = self.embedding(x) if node_depth is None else self.embedding(x, node_depth.view(-1,))
-        if self.abs_pe and abs_pe is not None:
-            abs_pe = self.embedding_abs_pe(abs_pe)
-            output = output + abs_pe
-        split_sizes = (data.ptr[1:] - data.ptr[:-1]).tolist()  # [num_nodes_graph1, num_nodes_graph2, ...]
-        node_embeddings = output.split(split_sizes)  # list of [Ni, dim] tensors, i=1..B
+            # positional + input embeddings
+            abs_pe = data.abs_pe if hasattr(data, 'abs_pe') else None
+            # print("abs_pe = ", abs_pe.shape if abs_pe is not None else None)
+            output = self.embedding(x) if node_depth is None else self.embedding(x, node_depth.view(-1,))
+            # output = self.gcn_conv(output, edge_index)
+            if self.abs_pe and abs_pe is not None:
+                abs_pe = self.embedding_abs_pe(abs_pe)
+                output = output + abs_pe
 
-        # pad into [batch_size, max_nodes, dim]
-        output_padded = pad_sequence(node_embeddings, batch_first=True)  # [B, N_max, dim]
-        B, N_max, dim = output_padded.shape
+            # GCNConv
+            # output = self.gcn_conv(output, edge_index)
+            # output = self.encoder(output, edge_index, batch)
+            # print("output.type = ", type(output))
+
+            split_sizes = (data.ptr[1:] - data.ptr[:-1]).tolist()  # [num_nodes_graph1, num_nodes_graph2, ...]
+            node_embeddings = output.split(split_sizes)  # list of [Ni, dim] tensors, i=1..B
+
+            if self.aggregate_func is not None:
+                node_embeddings = list(node_embeddings)
+                edge_split = self.split_edge_index(edge_index, data.ptr)  # list of [2, Ni] tensors, i=1..B
+                for i in range(len(node_embeddings)):
+                    # print("self.aggregate_func = ", self.aggregate_func)
+                    node_embeddings[i] = self.aggregate_func(node_embeddings[i], edge_split[i].to(node_embeddings[i].device))
+
+            # pad into [batch_size, max_nodes, dim]
+            output_padded = pad_sequence(node_embeddings, batch_first=True)  # [B, N_max, dim]
+            B, N_max, dim = output_padded.shape
 
         # build layers
         self.build_layers(
@@ -565,6 +649,9 @@ class GraphViT(nn.Module):
                 pred_list.append(self.classifier[i](pooled))
             return pred_list
 
-        linear_out = nn.Linear(pooled.size(1), self.embedding.embedding_dim).to(pooled.device)
+        # graph regression
+        # linear_out = nn.Linear(pooled.size(1), self.embedding.embedding_dim).to(pooled.device)
+        # graph classification
+        linear_out = nn.Linear(pooled.size(1), self.embedding.out_features).to(pooled.device)
         pooled = linear_out(pooled)
         return self.classifier(pooled)
