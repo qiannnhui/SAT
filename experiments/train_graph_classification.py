@@ -24,6 +24,7 @@ from model.simclr import simclr
 from infonce import InfoNCE
 from experiments.arguments import load_args
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+from groupvit.plot_group_tokens import plot_batch_graphs, plot_batch_graphs_all_layers
 
 def evaluate_classification(y_true, y_pred, metric='acc'):
     y_true = y_true.cpu().numpy() if isinstance(y_true, torch.Tensor) else y_true
@@ -64,7 +65,12 @@ def train_epoch(model, model_simclr, loader, criterion, optimizer, lr_scheduler,
             data = data.cuda()
 
         optimizer.zero_grad()
-        output = model(data)
+        # print("train: \n")
+        output, attn_dict_list = model(data, return_attn=True)
+        soft_list = [d["soft"] for d in attn_dict_list if d is not None and "soft" in d]
+
+        # print("soft_list:", soft_list)
+        # output = model(data)
 
         # get features from simclr
         # features_simclr = model_simclr(data)
@@ -106,7 +112,31 @@ def eval_epoch(model, model_simclr, loader, criterion, use_cuda=False, split='Va
             if use_cuda:
                 data = data.cuda()
 
-            output = model(data)
+            # print("evaluation \n")
+            output, attn_dict_list = model(data, return_attn=True)
+            # print("attn_dict_list shape:", len(attn_dict_list))
+            # print("attn_dict_list[0] = ", attn_dict_list[0])
+            plot_batch_graphs_all_layers(data, attn_dict_list)
+            # plot_batch_graphs(data, attn_dict_list)
+            # soft_list = [d["soft"] for d in attn_dict_list if d is not None and "soft" in d]
+            # hard_list = [d["hard"] for d in attn_dict_list if d is not None and "hard" in d]
+            # print("soft_list:", soft_list)
+            # print("hard_list:", hard_list)
+            # print("hard_list shape:", [h.shape for h in hard_list])
+            # print("hard_list size:", len(hard_list))
+            # plot_single_graph(data=data, attn_dict=hard_list[-1])
+            # print("batch = ", attn_dict_list[0]['hard'].shape[0])
+            # print("attn_dict_list[0] hard shape out = ", attn_dict_list[0]['hard'].shape)
+            # print("attn_dict_list[1] hard shape out = ", attn_dict_list[1]['hard'].shape)
+            # for i in range(attn_dict_list[0].get("hard", 0).shape[0]):
+            #     hard_list = attn_dict_list[0].get("hard")
+            #     # print("hard_list shape:", [h.shape for h in hard_list])
+            #     hard_i = hard_list[i] if hard_list is not None else None
+            #     # print("hard_i shape:", hard_i.shape)
+            #     print("hard_i = ", hard_i)
+            #     hard_i_trimmed = hard_i[:, :, :data[i].num_nodes]
+            #     plot_single_graph(data=data[i], attn_dict=hard_i_trimmed, title=f"{split} hard_list {i}")
+
             # get features from simclr
             # features_simclr = model_simclr(data)
             # features_simclr = model_simclr(data.x, data.edge_index, data.batch)
@@ -237,6 +267,10 @@ def main():
                              abs_pe_dim=args.abs_pe_dim,
                              in_embed=False,
                              subgraph_embed=args.subgraph_embed,
+                             num_group_tokens=[8, 4, 0],
+                             num_output_groups=[8, 4],
+                             embed_factors=[1, 1, 1], 
+                             depths=[3, 2, 1],
                             #  gnn_type=args.gnn_type,
                             #  use_edge_attr=args.use_edge_attr,
                             #  num_edge_features=num_edge_features,
@@ -330,7 +364,6 @@ def main():
     print("best epoch: {} best val score: {:.4f}".format(best_epoch, best_val_score))
     model.load_state_dict(best_weights)
 
-    print()
     print("Testing...")
     test_score, test_loss = eval_epoch(model, test_loader, criterion, args.use_cuda, split='Test')
 

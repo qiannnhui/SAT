@@ -54,6 +54,14 @@ def load_args():
     parser.add_argument('--use_gcn', action='store_true', help='aggregate with 2 layer gcn', default=False)
     parser.add_argument('--use_pretrained_gin', action='store_true', help='aggregrate with pretrained gin', default=False)
 
+    # OGB dataset
+    parser.add_argument('--not_extract_node_feature', action='store_true')
+    parser.add_argument('--aggr', type=str, default='add',
+                        help='the aggregation operator to obtain nodes\' initial features [mean, max, add]')
+    parser.add_argument('--plot_attn', action='store_true', help='plot attention weights')
+    parser.add_argument('--graph_idx', type=int, default=-1,
+                        help='index of the graph to visualize attention weights')
+    
     args = parser.parse_args()
     args.use_cuda = torch.cuda.is_available()
     args.batch_norm = not args.layer_norm

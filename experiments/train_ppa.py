@@ -19,109 +19,13 @@ from sat.position_encoding import POSENCODINGS
 from sat.gnn_layers import GNN_TYPES
 from sat.utils import add_zeros, extract_node_feature
 from timeit import default_timer as timer
+from groupvit.models import GraphViT
+from experiments.arguments import load_args
+from experiments.model_visu import draw_graph_with_attn
 
 from ogb.graphproppred import PygGraphPropPredDataset
 from ogb.graphproppred import Evaluator
 
-
-def load_args():
-    parser = argparse.ArgumentParser(
-        description='Structure-Aware Transformer on OGBG-PPA',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--seed', type=int, default=0,
-                        help='random seed')
-    parser.add_argument('--dataset', type=str, default="ogbg-ppa",
-                        help='name of dataset')
-    parser.add_argument('--num-heads', type=int, default=8, help="number of heads")
-    parser.add_argument('--num-layers', type=int, default=3, help="number of layers")
-    parser.add_argument('--dim-hidden', type=int, default=128, help="hidden dimension of Transformer")
-    parser.add_argument('--dropout', type=float, default=0.1, help="dropout")
-    parser.add_argument('--epochs', type=int, default=200,
-                        help='number of epochs')
-    parser.add_argument('--lr', type=float, default=0.0003,
-                        help='initial learning rate')
-    parser.add_argument('--weight-decay', type=float, default=1e-4, help='weight decay')
-    parser.add_argument('--batch-size', type=int, default=32,
-                        help='batch size')
-    parser.add_argument('--abs-pe', type=str, default=None, choices=POSENCODINGS.keys(),
-                        help='which absolute PE to use?')
-    parser.add_argument('--abs-pe-dim', type=int, default=20, help='dimension for absolute PE')
-    parser.add_argument('--outdir', type=str, default='',
-                        help='output path')
-    parser.add_argument('--warmup', type=int, default=10, help="number of epochs for warmup")
-    parser.add_argument('--layer-norm', action='store_true', help='use layer norm instead of batch norm')
-    parser.add_argument('--use-edge-attr', action='store_true', help='use edge features')
-    parser.add_argument('--edge-dim', type=int, default=128, help='edge features hidden dim')
-    parser.add_argument('--gnn-type', type=str, default='graph',
-                        choices=GNN_TYPES,
-                        help="GNN structure extractor type")
-    parser.add_argument('--k-hop', type=int, default=2, help="number of layers for GNNs")
-    parser.add_argument('--global-pool', type=str, default='mean', choices=['mean', 'cls', 'add'],
-                        help='global pooling method')
-    parser.add_argument('--se', type=str, default="gnn", 
-            help='Extractor type: khopgnn, or gnn')
-
-    parser.add_argument('--aggr', type=str, default='add',
-                        help='the aggregation operator to obtain nodes\' initial features [mean, max, add]')
-    parser.add_argument('--not_extract_node_feature', action='store_true')
-
-    args = parser.parse_args()
-    args.use_cuda = torch.cuda.is_available()
-    args.batch_norm = not args.layer_norm
-
-    args.save_logs = False
-    if args.outdir != '':
-        args.save_logs = True
-        outdir = args.outdir
-        if not os.path.exists(outdir):
-            try:
-                os.makedirs(outdir)
-            except Exception:
-                pass
-        outdir = outdir + '/{}'.format(args.dataset)
-        if not os.path.exists(outdir):
-            try:
-                os.makedirs(outdir)
-            except Exception:
-                pass
-        outdir = outdir + '/seed{}'.format(args.seed)
-        if not os.path.exists(outdir):
-            try:
-                os.makedirs(outdir)
-            except Exception:
-                pass
-        if args.use_edge_attr:
-            outdir = outdir + '/edge_attr'
-            if not os.path.exists(outdir):
-                try:
-                    os.makedirs(outdir)
-                except Exception:
-                    pass
-        pedir = 'None' if args.abs_pe is None else '{}_{}'.format(args.abs_pe, args.abs_pe_dim)
-        outdir = outdir + '/{}'.format(pedir)
-        if not os.path.exists(outdir):
-            try:
-                os.makedirs(outdir)
-            except Exception:
-                pass
-        bn = 'BN' if args.batch_norm else 'LN'
-        if args.se == "khopgnn":
-            outdir = outdir + '/{}_{}_{}_{}_{}_{}_{}_{}_{}_{}'.format(
-                args.se, args.gnn_type, args.k_hop, args.dropout, args.lr, args.weight_decay,
-                args.num_layers, args.num_heads, args.dim_hidden, bn,
-            )
-        else:
-            outdir = outdir + '/{}_{}_{}_{}_{}_{}_{}_{}_{}'.format(
-                args.gnn_type, args.k_hop, args.dropout, args.lr, args.weight_decay,
-                args.num_layers, args.num_heads, args.dim_hidden, bn,
-            )
-        if not os.path.exists(outdir):
-            try:
-                os.makedirs(outdir)
-            except Exception:
-                pass
-        args.outdir = outdir
-    return args
 
 
 def train_epoch(model, loader, criterion, optimizer, lr_scheduler, epoch, use_cuda=False):
@@ -163,7 +67,7 @@ def train_epoch(model, loader, criterion, optimizer, lr_scheduler, epoch, use_cu
     return epoch_loss
 
 
-def eval_epoch(model, loader, criterion, use_cuda=False, split='Val'):
+def eval_epoch(model, loader, criterion, use_cuda=False, split='Val', get_attn=False):
     model.eval()
 
     running_loss = 0.0
@@ -177,7 +81,7 @@ def eval_epoch(model, loader, criterion, use_cuda=False, split='Val'):
             if use_cuda:
                 data = data.cuda()
 
-            output = model(data)
+            output, attn_dict = model(data, return_attn=True)
             loss = criterion(output, data.y.squeeze())
             
             y_true.append(data.y.cpu())
@@ -248,26 +152,56 @@ def main():
         deg = None
     print(deg)
 
-    model = GraphTransformer(in_size=input_size,
+    if args.model == 'sat':
+        model = GraphTransformer(in_size=input_size,
+                                num_class=dataset.num_classes,
+                                d_model=args.dim_hidden,
+                                dim_feedforward=2*args.dim_hidden,
+                                dropout=args.dropout,
+                                num_heads=args.num_heads,
+                                num_layers=args.num_layers,
+                                batch_norm=args.batch_norm,
+                                abs_pe=args.abs_pe,
+                                abs_pe_dim=args.abs_pe_dim,
+                                gnn_type=args.gnn_type,
+                                k_hop=args.k_hop,
+                                use_edge_attr=args.use_edge_attr,
+                                num_edge_features=num_edge_features,
+                                edge_dim=args.edge_dim,
+                                se=args.se,
+                                deg=deg,
+                                in_embed=False,
+                                edge_embed=False,
+                                global_pool=args.global_pool)
+    elif args.model == "graphvit":
+        model = GraphViT(in_size=input_size,
                              num_class=dataset.num_classes,
                              d_model=args.dim_hidden,
-                             dim_feedforward=2*args.dim_hidden,
-                             dropout=args.dropout,
-                             num_heads=args.num_heads,
-                             num_layers=args.num_layers,
-                             batch_norm=args.batch_norm,
+                            #  dim_feedforward=2*args.dim_hidden,
+                            #  dropout=args.dropout,
+                            #  num_heads=args.num_heads,
+                            #  num_layers=args.num_layers,
+                            #  batch_norm=args.batch_norm,
                              abs_pe=args.abs_pe,
                              abs_pe_dim=args.abs_pe_dim,
-                             gnn_type=args.gnn_type,
-                             k_hop=args.k_hop,
-                             use_edge_attr=args.use_edge_attr,
-                             num_edge_features=num_edge_features,
-                             edge_dim=args.edge_dim,
-                             se=args.se,
-                             deg=deg,
                              in_embed=False,
-                             edge_embed=False,
-                             global_pool=args.global_pool)
+                             subgraph_embed=args.subgraph_embed,
+                             num_group_tokens=[8, 4, 0],
+                             num_output_groups=[8, 4],
+                             embed_factors=[1, 1, 1], 
+                             depths=[3, 2, 1],
+                            #  gnn_type=args.gnn_type,
+                            #  use_edge_attr=args.use_edge_attr,
+                            #  num_edge_features=num_edge_features,
+                            #  edge_dim=args.edge_dim,
+                            #  k_hop=args.k_hop,
+                            #  se=args.se,
+                            #  deg=deg
+                            )
+        print("GraphViT")
+    else:
+        raise ValueError("Unknown model type: {}".format(args.model))
+
     if args.use_cuda:
         model.cuda()
     print("Total number of parameters: {}".format(count_parameters(model)))
@@ -313,7 +247,7 @@ def main():
             best_val_score = val_score
             best_val_loss = val_loss
             best_epoch = epoch
-            best_weights = copy.deepcopy(model.state_dict())
+            best_weights = copy.deepcopy(model.state_dict())            
 
     total_time = timer() - start_time
     print("best epoch: {} best val score: {:.4f}".format(best_epoch, best_val_score))

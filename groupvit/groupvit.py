@@ -17,8 +17,6 @@ import torch.utils.checkpoint as checkpoint
 from einops import rearrange
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
-# from .misc import Result, interpolate_pos_encoding
-
 
 class Mlp(nn.Module):
 
@@ -533,7 +531,7 @@ class GroupingLayer(nn.Module):
             return x
         return torch.cat([x, group_token], dim=1)
 
-    def forward(self, x, prev_group_token=None, return_attn=False):
+    def forward(self, x, prev_group_token=None, return_attn=False, edge_index=None):
         """
         Args:
             x (torch.Tensor): image tokens, [B, L, C]
@@ -544,10 +542,12 @@ class GroupingLayer(nn.Module):
             group_token = self.group_token.expand(x.size(0), -1, -1)
             if self.group_projector is not None:
                 group_token = group_token + self.group_projector(prev_group_token)
+            # plot_group_tokens(group_token, x, self.input_length, self.num_group_token)
         else:
             group_token = None
 
         B, L, C = x.shape
+        # Attention: self attention on image tokens and group tokens, to get global information.
         cat_x = self.concat_x(x, group_token)
         for blk_idx, blk in enumerate(self.blocks):
             if self.use_checkpoint:

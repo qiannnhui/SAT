@@ -18,6 +18,7 @@ from sat.utils import count_parameters
 from sat.position_encoding import POSENCODINGS
 from sat.gnn_layers import GNN_TYPES
 from timeit import default_timer as timer
+from groupvit.models import GraphViT
 
 from ogb.graphproppred import PygGraphPropPredDataset
 from ogb.graphproppred import Evaluator
@@ -61,6 +62,11 @@ def load_args():
     parser.add_argument('--k-hop', type=int, default=2, help="number of layers for GNNs")
     parser.add_argument('--global-pool', type=str, default='mean', choices=['mean', 'cls', 'add'],
                         help='global pooling method')
+    parser.add_argument('--model', type=str, default='sat',
+                        choices=['sat', 'graphvit'],
+                        help='model type: sat or graphvit')
+    parser.add_argument('--subgraph-embed', action='store_true',
+                        help='use subgraph embedding for graphvit')
 
     parser.add_argument('--se', type=str, default="gnn", 
             help='Extractor type: khopgnn, or gnn')
@@ -210,10 +216,11 @@ def eval_epoch(model, loader, criterion, evaluator, arr_to_seq, use_cuda=False, 
 
     n_sample = len(loader.dataset)
     epoch_loss = running_loss / n_sample
-    score = evaluator.eval({"seq_ref": seq_ref_list, "seq_pred": seq_pred_list})['F1']
-    print('{} loss: {:.4f} score: {:.4f} time: {:.2f}s'.format(
-          split, epoch_loss, score, toc - tic))
-    return score, epoch_loss
+    f1_score = evaluator.eval({"seq_ref": seq_ref_list, "seq_pred": seq_pred_list})['F1']
+    acc_score = evaluator.eval({"seq_ref": seq_ref_list, "seq_pred": seq_pred_list})['F1']
+    print('{} loss: {:.4f} f1_score: {:.4f} acc_score: {:.4f} time: {:.2f}s'.format(
+          split, epoch_loss, f1_score, acc_score, toc - tic))
+    return f1_score, epoch_loss
 
 
 def main():
@@ -288,28 +295,53 @@ def main():
         num_nodeattributes = len(nodeattributes_mapping['attr']),
         max_depth = 20
     )
-
-    model = GraphTransformer(in_size=node_encoder,
+    if args.model == 'sat':
+        model = GraphTransformer(in_size=node_encoder,
+                                num_class=len(vocab2idx),
+                                d_model=args.dim_hidden,
+                                dim_feedforward=4*args.dim_hidden,
+                                dropout=args.dropout,
+                                num_heads=args.num_heads,
+                                num_layers=args.num_layers,
+                                batch_norm=args.batch_norm,
+                                abs_pe=args.abs_pe,
+                                abs_pe_dim=args.abs_pe_dim,
+                                gnn_type=args.gnn_type,
+                                k_hop=args.k_hop,
+                                use_edge_attr=args.use_edge_attr,
+                                num_edge_features=num_edge_features,
+                                edge_dim=args.edge_dim,
+                                se=args.se,
+                                deg=deg,
+                                in_embed=True,
+                                edge_embed=False,
+                                max_seq_len=args.max_seq_len,
+                                global_pool=args.global_pool)
+    elif args.model == "graphvit":
+        model = GraphViT(in_size=node_encoder,
                              num_class=len(vocab2idx),
                              d_model=args.dim_hidden,
-                             dim_feedforward=4*args.dim_hidden,
-                             dropout=args.dropout,
-                             num_heads=args.num_heads,
-                             num_layers=args.num_layers,
-                             batch_norm=args.batch_norm,
+                            #  dim_feedforward=2*args.dim_hidden,
+                            #  dropout=args.dropout,
+                            #  num_heads=args.num_heads,
+                            #  num_layers=args.num_layers,
+                            #  batch_norm=args.batch_norm,
                              abs_pe=args.abs_pe,
                              abs_pe_dim=args.abs_pe_dim,
-                             gnn_type=args.gnn_type,
-                             k_hop=args.k_hop,
-                             use_edge_attr=args.use_edge_attr,
-                             num_edge_features=num_edge_features,
-                             edge_dim=args.edge_dim,
-                             se=args.se,
-                             deg=deg,
-                             in_embed=True,
-                             edge_embed=False,
-                             max_seq_len=args.max_seq_len,
-                             global_pool=args.global_pool)
+                             in_embed=False,
+                             subgraph_embed=args.subgraph_embed,
+                            #  gnn_type=args.gnn_type,
+                            #  use_edge_attr=args.use_edge_attr,
+                            #  num_edge_features=num_edge_features,
+                            #  edge_dim=args.edge_dim,
+                            #  k_hop=args.k_hop,
+                            #  se=args.se,
+                            #  deg=deg
+                            )
+        print("GraphViT")
+    else:
+        raise ValueError("Unknown model type: {}".format(args.model))
+        
     if args.use_cuda:
         model.cuda()
     print("Total number of parameters: {}".format(count_parameters(model)))

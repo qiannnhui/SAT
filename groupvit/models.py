@@ -364,7 +364,7 @@ class GroupGraphTransformer(nn.Module):
                     return_attn=return_attn
                 )
             else:
-                x, group_token, attn_dict = layer(
+                x, group_token, attn_dicts = layer(
                     x,
                     prev_group_token=group_token,
                     return_attn=return_attn
@@ -388,7 +388,11 @@ class GroupGraphTransformer(nn.Module):
         
         linear_out = nn.Linear(output.size(1), self.embedding.embedding_dim).to(output.device)
         output = linear_out(output)
-        return self.classifier(output)
+        output = self.classifier(output)
+        if return_attn:
+            return output, attn_dicts
+        else:
+            return output
 
 
 class GraphViT(nn.Module):
@@ -607,7 +611,7 @@ class GraphViT(nn.Module):
                     node_embeddings[i] = self.aggregate_func(node_embeddings[i], edge_split[i].to(node_embeddings[i].device))
 
             # pad into [batch_size, max_nodes, dim]
-            output_padded = pad_sequence(node_embeddings, batch_first=True)  # [B, N_max, dim]
+            output_padded = pad_sequence(node_embeddings, batch_first=True)  # [B, N_max, dim], zero padding
             B, N_max, dim = output_padded.shape
 
         # build layers
@@ -620,12 +624,20 @@ class GraphViT(nn.Module):
         group_token = None
         attn_dict_list = []
         for layer in self.layers:
+            print("layer")
             output_padded, group_token, attn_dict = layer(
                 output_padded,
                 prev_group_token=group_token,
-                return_attn=return_attn
+                return_attn=return_attn,
+                edge_index=edge_index,
             )
+            # print("attn_dict keys = ", attn_dict.keys())
+            # print("attn_dict soft = ", attn_dict['soft'])
             attn_dict_list.append(attn_dict)
+        # print("attn_dict_list soft shape = ", attn_dict_list[0]['soft'].shape)
+        # print("attn_dict_list hard shape = ", attn_dict_list[0]['hard'].shape)
+        # print("attn_dict_list length = ", len(attn_dict_list))
+        # print("attm_dict_list_[0] = ", attn_dict_list[0])
 
         # readout step
         device = output_padded.device
@@ -647,11 +659,17 @@ class GraphViT(nn.Module):
             pred_list = []
             for i in range(self.max_seq_len):
                 pred_list.append(self.classifier[i](pooled))
-            return pred_list
+            if return_attn:
+                return pred_list, attn_dict_list
+            else:
+                return pred_list
 
         # graph regression
         # linear_out = nn.Linear(pooled.size(1), self.embedding.embedding_dim).to(pooled.device)
         # graph classification
         linear_out = nn.Linear(pooled.size(1), self.embedding.out_features).to(pooled.device)
         pooled = linear_out(pooled)
-        return self.classifier(pooled)
+        if return_attn:
+            return self.classifier(pooled), attn_dict_list
+        else:
+            return self.classifier(pooled)
