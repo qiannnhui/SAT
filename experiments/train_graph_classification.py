@@ -116,8 +116,9 @@ def eval_epoch(model, model_simclr, loader, criterion, use_cuda=False, split='Va
             output, attn_dict_list = model(data, return_attn=True)
             # print("attn_dict_list shape:", len(attn_dict_list))
             # print("attn_dict_list[0] = ", attn_dict_list[0])
-            plot_batch_graphs_all_layers(data, attn_dict_list)
-            # plot_batch_graphs(data, attn_dict_list)
+            if args.plot_attn:
+                plot_batch_graphs_all_layers(data, attn_dict_list, attn_type='soft')
+                # plot_batch_graphs(data, attn_dict_list)
             # soft_list = [d["soft"] for d in attn_dict_list if d is not None and "soft" in d]
             # hard_list = [d["hard"] for d in attn_dict_list if d is not None and "hard" in d]
             # print("soft_list:", soft_list)
@@ -267,10 +268,11 @@ def main():
                              abs_pe_dim=args.abs_pe_dim,
                              in_embed=False,
                              subgraph_embed=args.subgraph_embed,
-                             num_group_tokens=[8, 4, 0],
-                             num_output_groups=[8, 4],
+                            #  num_group_tokens=[8, 4, 0],
+                            #  num_output_groups=[8, 4],
                              embed_factors=[1, 1, 1], 
-                             depths=[3, 2, 1],
+                            #  depths=[3, 2, 1],
+                            #  zero_init_group_tokens=True,
                             #  gnn_type=args.gnn_type,
                             #  use_edge_attr=args.use_edge_attr,
                             #  num_edge_features=num_edge_features,

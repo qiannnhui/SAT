@@ -2,7 +2,7 @@ import torch
 import matplotlib.pyplot as plt
 import networkx as nx
 import torch.nn.functional as F
-
+from matplotlib.colors import ListedColormap
 
 def get_attn_maps(data, attn_dict_list, attn_type='hard', return_onehot=False, rescale=False):
     """
@@ -92,7 +92,7 @@ def plot_batch_graphs_all_layers(data, attn_dict_list, attn_type='hard', group_c
             # print("attn_i shape = ", attn_i.shape)
             attn_i_transposed = attn_i.permute(1, 0)  # [num_classes, num_nodes]
             attn_i_trimmed = attn_i_transposed[:, :data[i].num_nodes] if attn_i is not None else None
-            # plot_single_graph(data=data[i], attn_dict=attn_i_trimmed, title=f"Node_Visualization_Graph_{i}_{attn_type}_Layer_{idx}")
+            plot_single_graph(data=data[i], attn_dict=attn_i_trimmed, title=f"Node_Visualization_Graph_{i}_{attn_type}_Layer_{idx}")
 
 
     # for i in range(batch_size):
@@ -127,6 +127,24 @@ def plot_batch_graphs(data, attn_dict_list, attn_type='hard', group_colors=None,
         plot_single_graph(data=data[i], attn_dict=hard_i_trimmed, title=f"Node_Visualization_Graph_{i}_{attn_type}")
 
 
+def get_group_colors(num_classes):
+    """
+    Generate a list of colors for each class.
+    
+    Parameters:
+    - num_classes: Number of classes
+    
+    Returns:
+    - group_colors: List of colors for each class
+    """
+    cmap1 = plt.get_cmap("tab20")
+    cmap2 = plt.get_cmap("tab20b")
+    cmap3 = plt.get_cmap("tab20c")
+    cmap4 = plt.get_cmap("Set3")
+    cmap = ListedColormap(cmap1.colors + cmap2.colors + cmap3.colors + cmap4.colors)
+    return [cmap(i) for i in range(num_classes)]
+
+
 def plot_single_graph(data, attn_dict, group_colors=None, title="Node Class Visualization (from hard_list)"):
     """
     plot a single graph with node colors based on attn_dict, the class of each node.
@@ -155,8 +173,9 @@ def plot_single_graph(data, attn_dict, group_colors=None, title="Node Class Visu
     num_classes = attn_dict.size(0)
     # print("Number of classes:", num_classes)
     if group_colors is None:
-        cmap = plt.get_cmap("tab10")
-        group_colors = [cmap(i) for i in range(num_classes)]
+        # cmap = plt.get_cmap("tab10")
+        # group_colors = [cmap(i) for i in range(num_classes)]
+        group_colors = get_group_colors(num_classes)
     # print("Group colors:", group_colors)
 
     G = nx.Graph()
