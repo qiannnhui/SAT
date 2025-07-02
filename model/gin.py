@@ -38,6 +38,7 @@ class Encoder(torch.nn.Module):
         # print("forward!")
         if x is None:
             x = torch.ones((batch.shape[0], 1)).to(device='cuda')
+            print("x is None, using ones tensor with shape:", x.shape)
 
         xs = []
         for i in range(self.num_gc_layers):

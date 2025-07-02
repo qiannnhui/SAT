@@ -9,13 +9,13 @@ from model.gin import Encoder
 from model import *
 
 class simclr(nn.Module):
-  def __init__(self, d_model, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
+  def __init__(self, in_size, d_model, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
     super(simclr, self).__init__()
 
     self.alpha = alpha
     self.beta = beta
     self.gamma = gamma
-    in_size = 1
+    in_size = in_size
 
     self.embedding_dim = mi_units = d_model * num_gc_layers
     self.encoder = Encoder(in_size, d_model, num_gc_layers)
@@ -63,7 +63,8 @@ class simclr(nn.Module):
         x = x.view(-1, 1)
     # print("x shape after Linear:", x.shape)  # 確保 x 的形狀是 [num_nodes, num_features]
 
-    y, M = self.encoder(x, edge_index, batch)
+    y = self.encoder(x, edge_index, batch)
+    # y, M = self.encoder(x, edge_index, batch)
     
     y = self.proj_head(y)
 

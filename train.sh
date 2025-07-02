@@ -21,5 +21,6 @@
 # python ./experiments/train_code2.py --gnn-type gcn --use-edge-attr --model graphvit
 
 
+python ./experiments/train_graph_classification.py --gnn-type gcn --model graphvit --DS MUTAG --abs-pe rw --epoch 10 --use_gcn --plot_attn --unsupervised
 python ./experiments/train_graph_classification.py --gnn-type gcn --model graphvit --DS MUTAG --abs-pe rw --epoch 10 --use_gcn --plot_attn
 # python ./experiments/train_graph_classification.py --gnn-type gcn --model graphvit --DS MUTAG --abs-pe rw --epoch 200 --use_pretrained_gin

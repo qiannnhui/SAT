@@ -87,7 +87,7 @@ def plot_batch_graphs_all_layers(data, attn_dict_list, attn_type='hard', group_c
                 continue
             # print("index = ", idx)
             # print("attn_map shape = ", attn_map.shape)
-            # print("attn_map = ", attn_map)
+            print("attn_map = ", attn_map)
             attn_i = attn_map[i] if attn_map is not None else None
             # print("attn_i shape = ", attn_i.shape)
             attn_i_transposed = attn_i.permute(1, 0)  # [num_classes, num_nodes]

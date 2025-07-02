@@ -118,6 +118,7 @@ def eval_epoch(model, model_simclr, loader, criterion, use_cuda=False, split='Va
             # print("attn_dict_list[0] = ", attn_dict_list[0])
             if args.plot_attn:
                 plot_batch_graphs_all_layers(data, attn_dict_list, attn_type='soft')
+                # plot_batch_graphs_all_layers(data, attn_dict_list, attn_type='hard')
                 # plot_batch_graphs(data, attn_dict_list)
             # soft_list = [d["soft"] for d in attn_dict_list if d is not None and "soft" in d]
             # hard_list = [d["hard"] for d in attn_dict_list if d is not None and "hard" in d]
@@ -268,8 +269,8 @@ def main():
                              abs_pe_dim=args.abs_pe_dim,
                              in_embed=False,
                              subgraph_embed=args.subgraph_embed,
-                            #  num_group_tokens=[8, 4, 0],
-                            #  num_output_groups=[8, 4],
+                             num_group_tokens=[8, 4, 0],
+                             num_output_groups=[8, 4],
                              embed_factors=[1, 1, 1], 
                             #  depths=[3, 2, 1],
                             #  zero_init_group_tokens=True,
@@ -285,8 +286,8 @@ def main():
     else:
         raise ValueError("Model type not supported")
     
-    model_simclr = simclr(d_model=args.dim_hidden, num_gc_layers=args.num_layers)
-    # model_simclr = simclr(in_size=input_size, d_model=args.dim_hidden, num_gc_layers=args.num_layers)
+    # model_simclr = simclr(d_model=args.dim_hidden, num_gc_layers=args.num_layers)
+    model_simclr = simclr(in_size=input_size, d_model=args.dim_hidden, num_gc_layers=args.num_layers)
 
     if args.use_cuda:
         model.cuda()

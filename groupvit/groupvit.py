@@ -483,8 +483,8 @@ class GroupingLayer(nn.Module):
             self.group_token = nn.Parameter(torch.zeros(1, num_group_token, dim))
             self.group_token = nn.Parameter(torch.zeros(1, num_group_token, dim))
             if not zero_init_group_token:
-                trunc_normal_(self.group_token, std=3)
-                # trunc_normal_(self.group_token, std=.02)
+                # trunc_normal_(self.group_token, std=3)
+                trunc_normal_(self.group_token, std=.02)
         else:
             self.group_token = None
 
