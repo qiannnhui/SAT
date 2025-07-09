@@ -87,7 +87,7 @@ def plot_batch_graphs_all_layers(data, attn_dict_list, attn_type='hard', group_c
                 continue
             # print("index = ", idx)
             # print("attn_map shape = ", attn_map.shape)
-            print("attn_map = ", attn_map)
+            # print("attn_map = ", attn_map)
             attn_i = attn_map[i] if attn_map is not None else None
             # print("attn_i shape = ", attn_i.shape)
             attn_i_transposed = attn_i.permute(1, 0)  # [num_classes, num_nodes]
@@ -164,6 +164,8 @@ def plot_single_graph(data, attn_dict, group_colors=None, title="Node Class Visu
     # print("attn_dict.dim() = ", attn_dict.dim())
     if attn_dict.dim() == 3:
         attn_dict = attn_dict.squeeze(0)  # Remove batch dim => [num_nodes, num_classes]
+    width = attn_dict.size(1)
+    # print("Attention dict width:", width) 
 
     class_idx = attn_dict.argmax(dim=0).cpu().numpy()  # [num_nodes]
     # print("Class indices:", class_idx)
@@ -186,7 +188,7 @@ def plot_single_graph(data, attn_dict, group_colors=None, title="Node Class Visu
 
 
     pos = nx.spring_layout(G, seed=42)
-    plt.figure(figsize=(12, 12))
+    plt.figure(figsize=(width, width))
     nx.draw_networkx_nodes(G, pos, nodelist=sorted(G.nodes()), node_color=node_colors, node_size=1000)
     nx.draw_networkx_edges(G, pos, alpha=0.5)
     nx.draw_networkx_labels(G, pos, labels={i: f'{i}\nC{c}' for i, c in enumerate(class_idx)}, font_color='white')

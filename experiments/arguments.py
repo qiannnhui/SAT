@@ -58,6 +58,7 @@ def load_args():
     parser.add_argument('--not_extract_node_feature', action='store_true')
     parser.add_argument('--aggr', type=str, default='add',
                         help='the aggregation operator to obtain nodes\' initial features [mean, max, add]')
+    parser.add_argument('--gumbel_assignment', action='store_true', help='use gumbel assignment for group tokens')
     parser.add_argument('--plot_attn', action='store_true', help='plot attention weights')
     parser.add_argument('--graph_idx', type=int, default=-1,
                         help='index of the graph to visualize attention weights')

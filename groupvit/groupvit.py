@@ -145,6 +145,8 @@ class AssignAttention(nn.Module):
 
         # [B, nh, N, S]
         raw_attn = (q @ k.transpose(-2, -1)) * self.scale
+        # print("self.scale = ", self.scale)
+        # print("raw_attn = ", raw_attn)
 
         attn = self.get_attn(raw_attn)
         if return_attn:
@@ -226,6 +228,7 @@ class GroupingBlock(nn.Module):
             dim=dim,
             num_heads=1,
             qkv_bias=True,
+            # qk_scale=1e10,
             hard=hard,
             gumbel=gumbel,
             gumbel_tau=gumbel_tau,
@@ -483,8 +486,8 @@ class GroupingLayer(nn.Module):
             self.group_token = nn.Parameter(torch.zeros(1, num_group_token, dim))
             self.group_token = nn.Parameter(torch.zeros(1, num_group_token, dim))
             if not zero_init_group_token:
-                # trunc_normal_(self.group_token, std=3)
-                trunc_normal_(self.group_token, std=.02)
+                trunc_normal_(self.group_token, std=3)
+                # trunc_normal_(self.group_token, std=.02)
         else:
             self.group_token = None
 

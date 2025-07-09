@@ -21,11 +21,10 @@ from sat.utils import add_zeros, extract_node_feature
 from timeit import default_timer as timer
 from groupvit.models import GraphViT
 from experiments.arguments import load_args
-from experiments.model_visu import draw_graph_with_attn
 
 from ogb.graphproppred import PygGraphPropPredDataset
 from ogb.graphproppred import Evaluator
-
+from groupvit.plot_group_tokens import plot_batch_graphs_all_layers, plot_batch_graphs
 
 
 def train_epoch(model, loader, criterion, optimizer, lr_scheduler, epoch, use_cuda=False):
@@ -81,7 +80,11 @@ def eval_epoch(model, loader, criterion, use_cuda=False, split='Val', get_attn=F
             if use_cuda:
                 data = data.cuda()
 
-            output, attn_dict = model(data, return_attn=True)
+            output, attn_dict_list = model(data, return_attn=True)
+            if args.plot_attn:
+                plot_batch_graphs_all_layers(data, attn_dict_list, attn_type='soft')
+                # plot_batch_graphs_all_layers(data, attn_dict_list, attn_type='hard')
+                # plot_batch_graphs(data, attn_dict_list)
             loss = criterion(output, data.y.squeeze())
             
             y_true.append(data.y.cpu())
@@ -186,10 +189,11 @@ def main():
                              abs_pe_dim=args.abs_pe_dim,
                              in_embed=False,
                              subgraph_embed=args.subgraph_embed,
-                             num_group_tokens=[8, 4, 0],
-                             num_output_groups=[8, 4],
+                             num_group_tokens=[64, 8, 0],
+                             num_output_groups=[64, 8],
                              embed_factors=[1, 1, 1], 
                              depths=[3, 2, 1],
+                             gumbel_assignment=args.gumbel_assignment,
                             #  gnn_type=args.gnn_type,
                             #  use_edge_attr=args.use_edge_attr,
                             #  num_edge_features=num_edge_features,

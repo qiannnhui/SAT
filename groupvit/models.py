@@ -399,7 +399,7 @@ class GraphViT(nn.Module):
     def __init__(self, in_size, d_model, num_class, abs_pe=False, abs_pe_dim=0, in_embed=True, subgraph_embed=False,
                  embed_factors=[1, 1, 1], depths=[6, 3, 3],
                  num_heads=[8, 8, 8], num_group_tokens=[64, 8, 0],
-                 num_output_groups=[64, 8], hard_assignment=True,
+                 num_output_groups=[64, 8], hard_assignment=True, gumbel_assignment=False,
                  mlp_ratio=4, qkv_bias=True, qk_scale=None, drop_rate=0., attn_drop_rate=0., 
                  drop_path_rate=0.1, use_ckpt=False, global_pool='mean', max_seq_len=None, **kwargs):
         super().__init__()
@@ -410,6 +410,7 @@ class GraphViT(nn.Module):
         self.num_output_groups = num_output_groups
         self.num_heads = num_heads
         self.hard_assignment = hard_assignment
+        self.gumbel_assignment = gumbel_assignment
         # GroupingLayer parameters
         self.mlp_ratio = mlp_ratio
         self.qkv_bias = qkv_bias
@@ -501,7 +502,7 @@ class GraphViT(nn.Module):
                     num_output_group=self.num_output_groups[i_layer],
                     norm_layer=nn.LayerNorm,
                     hard=self.hard_assignment,
-                    gumbel=self.hard_assignment
+                    gumbel=self.gumbel_assignment
                 )
                 num_output_token = self.num_output_groups[i_layer]
 
@@ -518,6 +519,7 @@ class GraphViT(nn.Module):
             else:
                 group_projector = None
 
+            # print("num_heads = ", self.num_heads)
             layer = GroupingLayer(
                 dim=dim,
                 num_input_token=num_input_token,
@@ -624,7 +626,7 @@ class GraphViT(nn.Module):
         group_token = None
         attn_dict_list = []
         for layer in self.layers:
-            print("layer")
+            # print("layer")
             output_padded, group_token, attn_dict = layer(
                 output_padded,
                 prev_group_token=group_token,
